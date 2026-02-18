@@ -24,7 +24,7 @@ class SteamToolsPro:
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # ---- Верхняя панель ----
-        url_frame = ttk.LabelFrame(main_frame, text="Добавить игру / Активировать ключ", padding="10")
+        url_frame = ttk.LabelFrame(main_frame, text="Добавить игру", padding="10")
         url_frame.pack(fill=tk.X, pady=5)
         
         ttk.Label(url_frame, text="Ссылка на игру или AppID:").grid(row=0, column=0, sticky=tk.W)
@@ -34,17 +34,11 @@ class SteamToolsPro:
         btn_frame = ttk.Frame(url_frame)
         btn_frame.grid(row=1, column=0, columnspan=2, pady=10)
         
-        self.add_btn = ttk.Button(btn_frame, text="➕ Добавить игру (без лицензии)", command=self.thread_add_game)
+        self.add_btn = ttk.Button(btn_frame, text="➕ Добавить в библиотеку", command=self.thread_add_game)
         self.add_btn.pack(side=tk.LEFT, padx=2)
-        
-        self.activate_btn = ttk.Button(btn_frame, text="🔑 Активировать ключ", command=self.thread_activate_key)
-        self.activate_btn.pack(side=tk.LEFT, padx=2)
         
         self.farm_btn = ttk.Button(btn_frame, text="⏱ Фарм часов", command=self.thread_farm_hours)
         self.farm_btn.pack(side=tk.LEFT, padx=2)
-        
-        self.cards_btn = ttk.Button(btn_frame, text="🎴 Дроп карт", command=self.thread_drop_cards)
-        self.cards_btn.pack(side=tk.LEFT, padx=2)
         
         # Статус Steam
         status_frame = ttk.LabelFrame(main_frame, text="Статус Steam", padding="5")
@@ -59,19 +53,17 @@ class SteamToolsPro:
         games_frame = ttk.LabelFrame(main_frame, text="Активные игры", padding="10")
         games_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        columns = ('appid', 'name', 'status', 'time', 'action')
+        columns = ('appid', 'name', 'status', 'time')
         self.games_tree = ttk.Treeview(games_frame, columns=columns, show='headings', height=10)
         self.games_tree.heading('appid', text='AppID')
         self.games_tree.heading('name', text='Название')
         self.games_tree.heading('status', text='Статус')
         self.games_tree.heading('time', text='Наиграно')
-        self.games_tree.heading('action', text='Действие')
         
         self.games_tree.column('appid', width=80)
-        self.games_tree.column('name', width=250)
+        self.games_tree.column('name', width=300)
         self.games_tree.column('status', width=120)
         self.games_tree.column('time', width=80)
-        self.games_tree.column('action', width=100)
         
         scrollbar = ttk.Scrollbar(games_frame, orient=tk.VERTICAL, command=self.games_tree.yview)
         self.games_tree.configure(yscrollcommand=scrollbar.set)
@@ -102,7 +94,7 @@ class SteamToolsPro:
         
         self.check_steam()
         self.update_games_list()
-        self.log("Steam Tools Pro запущен. Режим: unrestricted")
+        self.log("Steam Tools Pro запущен")
         
     def log(self, msg, level="INFO"):
         timestamp = time.strftime("%H:%M:%S")
@@ -150,10 +142,8 @@ class SteamToolsPro:
             pass
         return f"Game {appid}"
         
-    # ----- Поиск папки Steam -----
     def find_steam_folder(self):
         if sys.platform == "win32":
-            # Попытка через реестр
             try:
                 import winreg
                 key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam")
@@ -162,7 +152,6 @@ class SteamToolsPro:
                     return steam_path.replace('/', '\\')
             except:
                 pass
-            # Стандартные пути
             candidates = [
                 "C:\\Program Files (x86)\\Steam",
                 "C:\\Program Files\\Steam",
@@ -175,11 +164,52 @@ class SteamToolsPro:
                     return path
         elif sys.platform == "darwin":
             return os.path.expanduser("~/Library/Application Support/Steam")
-        else:  # linux
+        else:
             return os.path.expanduser("~/.steam/steam")
         return None
         
-    # ----- Добавление игры через манифест -----
+    def create_manifest_template(self, appid):
+        """Создаёт шаблон манифеста, если нет установленных игр"""
+        steam_path = self.find_steam_folder()
+        if not steam_path:
+            return False
+            
+        steamapps_path = os.path.join(steam_path, "steamapps")
+        if not os.path.exists(steamapps_path):
+            os.makedirs(steamapps_path, exist_ok=True)
+        
+        # Шаблон манифеста
+        template_content = f'''"AppState"
+{{
+    "appid"		"{appid}"
+    "Universe"		"1"
+    "name"		"{self.get_game_name(appid)}"
+    "installdir"		"dummy_{appid}"
+    "StateFlags"		"4"
+    "SizeOnDisk"		"0"
+    "StagingSize"		"0"
+    "buildid"		"0"
+    "LastUpdated"		"0"
+    "UpdateResult"		"0"
+    "BytesToDownload"		"0"
+    "BytesDownloaded"		"0"
+    "BytesToStage"		"0"
+    "BytesStaged"		"0"
+    "UserConfig"
+    {{
+    }}
+}}'''
+        
+        manifest_path = os.path.join(steamapps_path, f"appmanifest_{appid}.acf")
+        try:
+            with open(manifest_path, 'w', encoding='utf-8') as f:
+                f.write(template_content)
+            self.log(f"✓ Создан шаблон манифеста для AppID {appid}")
+            return True
+        except Exception as e:
+            self.log(f"Ошибка создания шаблона: {e}", "ERROR")
+            return False
+            
     def add_game_via_manifest(self, appid):
         steam_path = self.find_steam_folder()
         if not steam_path:
@@ -192,9 +222,10 @@ class SteamToolsPro:
             return False
             
         manifests = list(Path(steamapps_path).glob("appmanifest_*.acf"))
+        
+        # Если нет манифестов - используем шаблон
         if not manifests:
-            self.log("Нет установленных игр для создания шаблона", "ERROR")
-            return False
+            return self.create_manifest_template(appid)
             
         template_path = str(manifests[0])
         new_manifest_path = os.path.join(steamapps_path, f"appmanifest_{appid}.acf")
@@ -203,17 +234,13 @@ class SteamToolsPro:
             with open(template_path, 'r', encoding='utf-8') as f:
                 content = f.read()
                 
-            # Заменяем appid
             old_appid_match = re.search(r'"appid"\s+"(\d+)"', content)
             if old_appid_match:
                 old_appid = old_appid_match.group(1)
                 content = content.replace(f'"{old_appid}"', f'"{appid}"')
                 
-            # Меняем название
             game_name = self.get_game_name(appid)
             content = re.sub(r'"name"\s+"[^"]+"', f'"name" "{game_name}"', content)
-            
-            # Меняем installdir и ставим размер 0
             content = re.sub(r'"installdir"\s+"[^"]+"', f'"installdir" "dummy_{appid}"', content)
             content = re.sub(r'"SizeOnDisk"\s+"\d+"', '"SizeOnDisk" "0"', content)
             
@@ -257,13 +284,13 @@ class SteamToolsPro:
         except Exception as e:
             self.log(f"Не удалось запустить Steam: {e}", "ERROR")
             
-    # ----- Потоковые обертки -----
     def thread_add_game(self):
         threading.Thread(target=self.add_game, daemon=True).start()
         
     def add_game(self):
         input_text = self.url_entry.get()
         appid = self.extract_appid(input_text)
+        
         if not appid:
             self.log("Не удалось распознать AppID", "ERROR")
             return
@@ -273,10 +300,10 @@ class SteamToolsPro:
                 return
             self.start_steam()
             time.sleep(5)
-            
+        
         if self.add_game_via_manifest(appid):
             name = self.get_game_name(appid)
-            # Добавляем в список (если нет дубликата)
+            
             if not any(g['appid'] == appid for g in self.active_games):
                 self.active_games.append({
                     'appid': appid,
@@ -286,22 +313,12 @@ class SteamToolsPro:
                 })
                 self.save_games()
                 self.update_games_list()
+            
             self.log(f"✓ Игра {name} добавлена в библиотеку Steam")
-            # Перезапускаем Steam для применения
-            if messagebox.askyesno("Перезапуск", "Перезапустить Steam сейчас? (рекомендуется)"):
+            
+            if messagebox.askyesno("Перезапуск", "Перезапустить Steam для применения?"):
                 self.restart_steam()
                 
-    def thread_activate_key(self):
-        threading.Thread(target=self.activate_key, daemon=True).start()
-        
-    def activate_key(self):
-        key = self.url_entry.get().strip()
-        if not key:
-            self.log("Введите ключ в поле ввода", "ERROR")
-            return
-        self.log(f"Попытка активации ключа {key}... (требуется библиотека steampy)")
-        # Заглушка – реальная активация через steampy или selenium
-        
     def thread_farm_hours(self):
         selected = self.games_tree.selection()
         if not selected:
@@ -318,43 +335,33 @@ class SteamToolsPro:
             
         game['status'] = 'фарм часов'
         self.update_games_list()
-        self.log(f"Запуск фарма часов для {game['name']} (AppID: {appid})")
+        self.log(f"Запуск фарма часов для {game['name']}")
         
         try:
-            # Запуск через steam://
+            # Используем Spacewar (AppID 480) для фарма - это тестовая игра Steam
+            # которая есть у всех
+            subprocess.Popen(f"steam://rungameid/480", shell=True)
+            
+            # Создаём фейковый процесс для отслеживания времени
             if sys.platform == "win32":
-                subprocess.Popen(f"steam://rungameid/{appid}", shell=True)
-            else:
-                subprocess.Popen(["xdg-open", f"steam://rungameid/{appid}"])
-                
-            if sys.platform == "win32":
-                proc = subprocess.Popen(["cmd.exe", "/c", "timeout", "/t", "99999"], 
-                                      creationflags=subprocess.CREATE_NO_WINDOW)
+                proc = subprocess.Popen(
+                    ["cmd.exe", "/c", "timeout", "/t", "99999"],
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
                 self.running_processes[appid] = proc
-                
-            start = time.time()
+            
+            start_time = time.time()
             while appid in self.running_processes:
                 time.sleep(60)
-                hours = round((time.time() - start) / 3600, 1)
+                hours = round((time.time() - start_time) / 3600, 1)
                 game['time'] = f"{hours}h"
                 self.update_games_list()
+                
         except Exception as e:
             self.log(f"Ошибка фарма: {e}", "ERROR")
             game['status'] = 'ошибка'
             self.update_games_list()
             
-    def thread_drop_cards(self):
-        selected = self.games_tree.selection()
-        if not selected:
-            messagebox.showwarning("Выбор игры", "Выберите игру в списке")
-            return
-        item = self.games_tree.item(selected[0])
-        appid = item['values'][0]
-        threading.Thread(target=self.drop_cards, args=(appid,), daemon=True).start()
-        
-    def drop_cards(self, appid):
-        self.farm_hours(appid)  # Для дропа карт нужен запуск игры
-        
     def stop_game(self):
         selected = self.games_tree.selection()
         if not selected:
@@ -401,9 +408,8 @@ class SteamToolsPro:
         for row in self.games_tree.get_children():
             self.games_tree.delete(row)
         for g in self.active_games:
-            action = '⏸ Стоп' if g['status'] == 'фарм часов' else '▶ Фарм'
             self.games_tree.insert('', tk.END, values=(
-                g['appid'], g['name'], g['status'], g['time'], action
+                g['appid'], g['name'], g['status'], g['time']
             ))
             
     def save_games(self):
@@ -420,7 +426,6 @@ class SteamToolsPro:
         return []
 
 if __name__ == "__main__":
-    # Проверка наличия psutil
     try:
         import psutil
     except ImportError:
